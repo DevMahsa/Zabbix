@@ -1,1 +1,81 @@
+"Add the Zabbix repository and install the packages"
+"The first step is to enable the Zabbix official repository by creating a file in /etc/yum.repos.d:"
+[]$ sudo vi /etc/yum.repos.d/zabbix.repo
+"Contents of the file:"
+<[Zabbix]
+name=Zabbix
+baseurl=http://repo.zabbix.com/zabbix/3.0/rhel/7/x86_64/
+gpgcheck=1
+gpgkey=http://repo.zabbix.com/zabbix-official-repo.key>
+"The packages in the standard CentOS repositories have the version number in their name.
+(zabbix22 for version 2.2) so they will not conflict with the packages from the repository which we added."
+"To be sure, we can check if we really are installing the latest version:"
+[]$ sudo yum install yum-utils
+"As you can see, package Zabbix is version 3.0.1 and it will be taken from the repository which we just added, named Zabbix."
+"Besides the Zabbix-repository, you will also need the EPEL repository for some dependencies. If you haven’t done so, add that repo too:"
+[]$ sudo yum install epel-release
+"Now that we are sure that Yum has access to the correct packages, let’s install what is necessary:"
+[]$ sudo yum -y install zabbix-server-mysql zabbix-agent zabbix-web-mysql mysql mariadb-server httpd php
+"Configure the database"
+"fter installing the packages, we need to do initialize MariaDB and set the root password. 
+Don’t get confused with all the references to MySQL in the commands below. 
+MariaDB is a fork of MySQL and clearly branding wasn’t very high on the priority list :)"
+[]$ sudo systemctl start mariadb
+[]$ mysql_secure_installation
+"Now that MariaDB is running and initialized, we can add a database for Zabbix, named zabbix, and create a user that has access to that DB.
+Use the root-password which you changed in the previous step when asked for a password and replace secretpassword with your own password for the zabbix database user."
+[]$ mysql -u root -p
+MariaDB [(none)]> create database zabbix;
+MariaDB [(none)]> grant all privileges on zabbix.* to zabbix@localhost identified by 'secretpassword';
+MariaDB [(none)]> flush privileges;
+MariaDB [(none)]> exit
+"Now that the database and user are ready, it’s time to create the database schema for Zabbix in the DB which we just added.
+The schema is delivered with Zabbix in /usr/share/doc/zabbix-server-mysql-<version>/create/. 
+(If you would install the packages from the standard repositories, the schema can be found in /usr/share/zabbix-mysql/.)"
+[]$ mysql -u root -p zabbix </usr/share/doc/zabbix-server-mysql-3.0.1/create/schema.sql
+[]$ mysql -u root -p zabbix </usr/share/doc/zabbix-server-mysql-3.0.1/create/images.sql
+[]$ mysql -u root -p zabbix </usr/share/doc/zabbix-server-mysql-3.0.1/create/data.sql
+"Be aware that, for this post, I’m leaving the rest of the MariaDB configuration at it’s default.
+For a production environment you really need some tuning in MariaDB to optimize the database system. 
+To do so, I recommend using Zabbix for a while and then use https://github.com/major/MySQLTuner-perl on a regular basis to tune the database parameters. 
+This approach is very straightforward and delivers very good results with a minimal effort."
+"Configure the webserver"
+"At this point, our database is ready so the next step is to configure the webserver (Apache) and PHP.
 
+The default parameters of PHP need some tuning for Zabbix:"
+[]$ sudo sed -i 's/^max_execution_time.*/max_execution_time=600/' /etc/php.ini
+[]$ sudo sed -i 's/^max_input_time.*/max_input_time=600/' /etc/php.ini
+[]$ sudo sed -i 's/^memory_limit.*/memory_limit=256M/' /etc/php.ini
+[]$ sudo sed -i 's/^post_max_size.*/post_max_size=32M/' /etc/php.ini
+[]$ sudo sed -i 's/^upload_max_filesize.*/upload_max_filesize=16M/' /etc/php.ini
+[]$ sudo sed -i "s/^\;date.timezone.*/date.timezone=\'Europe\/Brussels\'/" /etc/php.ini
+"The above commands just replace lines in /etc/php.ini by a line with the correct value. You can also edit the file by hand if you would like to.
+
+Next up is Apache. The Yum-installation, created a file for Apache in /etc/httpd/conf.d/zabbix.conf. Edit this file to look similar to this:"
+<
+#
+# Zabbix monitoring system php web frontend
+#
+ 
+Alias /zabbix /usr/share/zabbix
+ 
+<Directory "/usr/share/zabbix">
+    Options FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+ 
+<Directory "/usr/share/zabbix/conf">
+    Require all denied
+</Directory>
+ 
+<Directory "/usr/share/zabbix/include">
+    Require all denied
+</Directory>
+>
+"Configure Zabbix parameters:"
+"Next in the list, is the Zabbix configuration file for the server. It needs to know the password which we set for the zabbix database user earlier. Replace secretpassword with your own password which you set for the zabbix database user:"
+[]$ sudo sed -i 's/^# DBPassword=.*/DBPassword=secretpassword/' /etc/zabbix/zabbix_server.conf
+"In order to avoid some warnings like: “Less than 25% free in the configuration cache” or “Zabbix icmp pinger processes more than 75% busy”, set some more parameters in the file:"
+[]$ sudo sed -i 's/^# CacheSize=.*/CacheSize=32M/' /etc/zabbix/zabbix_server.conf
+[]$ sudo sed -i 's/^# StartPingers=.*/StartPingers=5/' /etc/zabbix/zabbix_server.conf

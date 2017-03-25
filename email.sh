@@ -1,3 +1,4 @@
+#created by Mahsa Golchian
 #!/bin/sh
 
 export smtpemailfrom="for ex: netalert@ut.ac.ir"
